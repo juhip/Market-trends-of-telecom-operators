@@ -1,0 +1,300 @@
+---
+title: "assign_inmobi"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+d = read.table("analyst_assignment_data_2.txt", 
+               sep="\t", 
+               col.names=c("date", "udid","operator","state","city","zipcode","ad_requests"), 
+               fill=FALSE, 
+               strip.white=TRUE)
+df<-d
+```
+
+```{r}
+rankfreq <- function(data, column, min=1) {
+  df = as.data.frame(sort(table(data[, column]), decreasing = T))
+  df = df[df$Freq >= min, ]
+  df$Rank = seq(length(df$Freq))
+  plot(df$Rank, df$Freq, log='xy', type='b', main=column)
+  df
+}
+
+ordfreq = function(data, column, levels) {
+  plot(factor(data[, column], levels=levels), main=column)
+  as.data.frame(table(data[, column]))
+}
+
+contfreq = function(data, column) {
+  hist(data[, column], breaks='Sturges')
+  as.data.frame(table(data[, column]))
+}
+```
+
+```{r}
+df$date<-as.Date(df$date, format = "%Y-%m-%d")
+head(df)
+lapply(df,class)
+# library(lubridate)
+# d$date_cast<-dmy(d$date_cast)
+
+library(lubridate)
+df$month<-month(df$date)
+df$dayofweek<-weekdays(df$date)
+df$weeknum<-format(df$date,"%U")
+```
+```{r}
+library(dplyr)
+df<-as.data.frame(tbl_df(df))
+
+rankfreq(df,'date')
+ordfreq(df,'month')
+ordfreq(df,"dayofweek")
+ordfreq(df,"weeknum")
+```
+
+```{r}
+rankfreq(df,'operator')
+rankfreq(df,'state')
+rankfreq(df,'city')
+rankfreq(df,'zipcode')
+ordfreq(df,'ad_requests')
+```
+
+
+```{r}
+#Analyze Market Share trends by Cities (Mumbai, Bangalore, Delhi, Chennai, Kolkata, Hyderabad)
+
+market<-df %>% group_by(state,operator,date) %>% filter(city %in% c("MUMBAI","KOLKATA","BANGALORE","CHENNAI","HYDERABAD") | state %in% "DELHI" ) %>% summarise(users=n_distinct(udid))
+
+```
+
+```{r}
+#To understand the churn pattern of users i.e. in which states/cities we are seeing a major movement of users to other carriers
+
+library(tidyr)
+
+##can one user have more than one subscriber per month #
+apr<-df[df$month==4,]
+may<-df[df$month==5,]
+
+check<-apr %>% select(udid,operator) %>% group_by(udid,operator)
+apr_churn<-as.data.frame(check[!duplicated(check),])
+
+check_may<-may %>% select(udid,operator) %>% group_by(udid,operator)
+may_churn<-as.data.frame(check_may[!duplicated(check_may),])
+
+churn_check<-merge(apr_churn,may_churn,by=c("udid"),all.x = TRUE)
+
+churn_check$move<-ifelse(churn_check$operator.x==churn_check$operator.y,0,1)
+
+table(churn_check$move)
+
+# 0       1 
+# 7788175  700351 
+
+#Assumption - total customers in the country (assuming every operator to have a new customer even if 1 person has 2 phones)
+
+# Percentage churn
+churn_perc<-700351/(8488526)
+
+# Loyal 
+loyal_perc<-7788175/(8488526)
+```
+
+```{r}
+# churn at state level
+
+library(dplyr)
+
+#to get distinct customers and state
+
+cust_same_state = unique(apr[,c('date','udid','state')])
+
+head(cust_same_state)
+
+#Subset May dataset to retain only those customers who stayed in the same state
+cust_may = merge(may, cust_same_state[,c('udid','state')], by= c('udid','state'))
+#cust_may.head()
+
+#Inner join at state level and then left join operators
+cust_state_inner<-merge( apr[,c('date','udid','state','operator')], cust_may[,c('date','udid','state','operator')], by= c('udid','state'))
+
+cust_state_inner<-as.data.frame(cust_state_inner[!duplicated(cust_state_inner),])
+
+cust_state_inner$check<-ifelse(cust_state_inner$operator.x==cust_state_inner$operator.y,"loyal","churn")
+
+## checking for loyal and churn ##
+table(cust_state_inner$check)
+
+#churn   loyal 
+#456163 6158790 
+
+churned_state<-cust_state_inner %>% group_by(state) %>% filter(check %in% "churn") %>% summarise(udid=n_distinct(udid))
+
+loyal_state<-cust_state_inner %>% group_by(state) %>% filter(check %in% "loyal") %>% summarise(udid=n_distinct(udid))
+
+final_churn_state<-merge(loyal_state, churned_state,by="state", suffixes=c('_loyal','_churned'))
+
+final_churn_state$total<-final_churn_state$udid_loyal + final_churn_state$udid_churned
+final_churn_state$perc_churn<-final_churn_state$udid_churned/final_churn_state$total
+final_churn_state$index<-final_churn_state$perc_churn/0.08
+
+final_churn_state<-final_churn_state[order(final_churn_state$index,decreasing = TRUE),]
+head(final_churn_state)
+```
+
+```{r}
+## city level churn ##
+#to get distinct customers and state
+
+cust_same_city = apr[,c('date','udid','state','city')]
+
+cust_same_city<-as.data.frame(cust_same_city[!duplicated(cust_same_city),])
+
+head(cust_same_city)
+
+#Subset May dataset to retain only those customers who stayed in the same city
+cust_may_city = merge(may, cust_same_city[,c('udid','state','city')], by= c('udid','state','city'))
+#cust_may.head()
+
+#Inner join at city level and then left join operators
+cust_city_inner = merge( apr[,c('date','udid','state','city','operator')], cust_may_city[,c('date','udid','state','city','operator')], by= c('udid','state','city'))
+
+cust_city_inner<-as.data.frame(cust_city_inner[!duplicated(cust_city_inner),])
+
+cust_city_inner$check<-ifelse(cust_city_inner$operator.x==cust_city_inner$operator.y,"loyal","churn")
+
+## checking for loyal and churn ##
+table(cust_city_inner$check)
+
+#churn   loyal 
+#456163 6158790 
+
+churned_city<-cust_city_inner %>% group_by(state,city) %>% filter(check %in% "churn") %>% summarise(udid=n_distinct(udid))
+
+loyal_city<-cust_city_inner %>% group_by(state,city) %>% filter(check %in% "loyal") %>% summarise(udid=n_distinct(udid))
+
+final_churn_city<-merge(loyal_city, churned_city,by=c("state","city"), suffixes=c('_loyal','_churned'))
+
+final_churn_city$total<-final_churn_city$udid_loyal + final_churn_city$udid_churned
+
+final_churn_city$perc_churn<-final_churn_city$udid_churned/final_churn_city$total
+
+final_churn_city$index<-final_churn_city$perc_churn/0.08
+
+final_churn_city<-final_churn_city[order(final_churn_city$index,decreasing = TRUE),]
+
+final_churn_city
+```
+
+
+```{r}
+library(reshape2)
+
+## pincode analysis - overall ##
+apr_zipcode<-apr %>% select(operator,zipcode,state) %>% group_by(operator,zipcode,state) %>% summarise(udid=n())
+
+apr_zipcode<-apr_zipcode[!duplicated(apr_zipcode),]
+
+apr_cast<-dcast(apr_zipcode,zipcode+state~operator,value.var = 'udid')
+
+apr_cast$airtel_share<-apr_cast$`Bharti Airtel`/rowSums(apr_cast[,c(3:6)])
+apr_cast$jio_share<-apr_cast$Jio/rowSums(apr_cast[,c(3:6)])
+apr_cast$idea_share<-apr_cast$Idea/rowSums(apr_cast[,c(3:6)])
+apr_cast$vodafone_share<-apr_cast$`Vodafone Essar`/rowSums(apr_cast[,c(3:6)])
+
+
+may_zipcode<-may %>% select(operator,zipcode,state) %>% group_by(operator,zipcode,state) %>% summarise(udid=n())
+
+may_cast<-dcast(may_zipcode,zipcode+state~operator,value.var = 'udid')
+
+may_cast$airtel_share<-may_cast$`Bharti Airtel`/rowSums(may_cast[,c(3:6)])
+may_cast$jio_share<-may_cast$Jio/rowSums(may_cast[,c(3:6)])
+may_cast$idea_share<-may_cast$Idea/rowSums(may_cast[,c(3:6)])
+may_cast$vodafone_share<-may_cast$`Vodafone Essar`/rowSums(may_cast[,c(3:6)])
+
+zipcode_final<-merge(apr_cast[,c(1,2,7:10)],may_cast[,c(1,2,7:10)],by=c("state","zipcode"),all.x = TRUE,suffixes = c('_apr','_may'))
+
+zipcode_final$airtel_growth<-zipcode_final$airtel_share_may-zipcode_final$airtel_share_apr
+
+zipcode_final$jio_growth<-zipcode_final$jio_share_may-zipcode_final$jio_share_apr
+zipcode_final$idea_growth<-zipcode_final$idea_share_may-zipcode_final$idea_share_apr
+zipcode_final$vodafone_growth<-zipcode_final$vodafone_share_may-zipcode_final$vodafone_share_apr
+
+zipcode_final<-zipcode_final[order(zipcode_final$airtel_growth,decreasing = FALSE),]
+zipcode_final
+```
+
+```{r}
+#Suggest a distinctive strategy for Airtel to retain its users across 3 different states
+
+# Top states where airtel is experiencing churn #
+
+# zipcode_final
+# airtel_state_degrowth<-zipcode_final %>% group_by(state) %>% summarise(airtel_growth=mean(airtel_growth,na.rm=TRUE))
+# 
+# airtel_state_degrowth<-airtel_state_degrowth[order(airtel_state_degrowth$airtel_growth,decreasing = FALSE),]
+# 
+# airtel_state_degrowth
+
+apr_state<-apr %>% group_by(operator,state) %>% summarise(cust=n())
+apr_cast<-dcast(apr_state,state~operator,value.var = 'cust')
+apr_cast$airtel_share<-apr_cast$`Bharti Airtel`/rowSums(apr_cast[,c(2:5)])
+
+may_state<-may %>% group_by(operator,state) %>% summarise(cust=n())
+may_cast<-dcast(may_state,state~operator,value.var = 'cust')
+may_cast$airtel_share<-may_cast$`Bharti Airtel`/rowSums(may_cast[,c(2:5)])
+
+state_final<-merge(apr_cast[,c(1,6)],may_cast[,c(1,6)],by=c("state"),all.x = TRUE,suffixes = c('_apr','_may'))
+
+state_final$airtel_growth<-state_final$airtel_share_may-state_final$airtel_share_apr
+
+state_final<-state_final[order(state_final$airtel_growth,decreasing = FALSE),]
+state_final
+```
+
+
+```{r}
+# ANOTHER APPROACH TO PINCODE #
+
+
+## april : zipcode - airtel + other
+## may : zipcode - airtel + other
+
+pincode_apr<-apr %>% select(operator,zipcode,udid,state) %>% group_by(operator,zipcode,udid,state)
+
+pincode_apr<-as.data.frame(pincode_apr[!duplicated(pincode_apr),])
+pin_apr<-pincode_apr
+pin_apr$op<-ifelse(!(pincode_apr$operator %in% "Bharti Airtel"),"others","airtel")
+pin_apr<-pin_apr %>% group_by(op,zipcode,state) %>% summarise(udid=n())
+ 
+pin_apr<-dcast(pin_apr,zipcode+state~op,value.var='udid')
+pin_apr$apr_share<-pin_apr$airtel/(pin_apr$airtel+pin_apr$others)
+
+pincode_may<-may %>% select(operator,zipcode,udid,state) %>% group_by(operator,zipcode,udid,state)
+
+pin_master<-merge(pincode_apr,pincode_may,by=c("zipcode","state","udid"),suffixes = c('_apr','_may'))
+
+pin_master$airteltoairtel<-ifelse(pin_master$operator_apr=="Bharti Airtel" & pin_master$operator_may=="Bharti Airtel",1,0)
+
+pin_master$airteltoother<-ifelse(pin_master$operator_apr=="Bharti Airtel" & pin_master$operator_may!="Bharti Airtel",1,0)
+
+pin_master$othertoairtel<-ifelse(pin_master$operator_apr!="Bharti Airtel" & pin_master$operator_may=="Bharti Airtel",1,0)
+
+pin_master$othertoother<-ifelse(pin_master$operator_apr!="Bharti Airtel" & pin_master$operator_may!="Bharti Airtel",1,0)
+
+pin_master$alltojio<-ifelse(pin_master$operator_apr!="Jio" & pin_master$operator_may=="Jio",1,0)
+
+pin_overall<-pin_master %>% group_by(zipcode,state) %>% summarise(airteltoairtel=sum(airteltoairtel),airteltoother=sum(airteltoother),othertoairtel=sum(othertoairtel),othertoother=sum(othertoother),alltojio=sum(alltojio),udid=n_distinct(udid))
+
+pin_overall$may_share<-(pin_overall$airteltoairtel-pin_overall$airteltoother+pin_overall$othertoairtel)/rowSums(pin_overall[,c(3:6)])
+
+
+## to check movement across operators per zipcode ##
+pin_final<-merge(pin_apr[,c('state','zipcode','apr_share')],pin_overall[,c('state','zipcode','may_share')],by=c('state','zipcode'),all.x=TRUE)
+
+pin_final$degrowth<-pin_final$apr_share-pin_final$may_share
+```
+
