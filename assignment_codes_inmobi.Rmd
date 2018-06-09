@@ -51,9 +51,6 @@ rankfreq(df,'date')
 ordfreq(df,'month')
 ordfreq(df,"dayofweek")
 ordfreq(df,"weeknum")
-```
-
-```{r}
 rankfreq(df,'operator')
 rankfreq(df,'state')
 rankfreq(df,'city')
@@ -67,6 +64,7 @@ market<-df %>% group_by(state,operator,date) %>% filter(city %in% c("MUMBAI","KO
 
 ```
 To understand the churn pattern of users i.e. in which states/cities we are seeing a major movement of users to other carriers
+Calculating churn% at a country level
 ```{r}
 library(tidyr)
 
@@ -149,7 +147,7 @@ final_churn_state$index<-final_churn_state$perc_churn/0.08
 final_churn_state<-final_churn_state[order(final_churn_state$index,decreasing = TRUE),]
 head(final_churn_state)
 ```
-
+Churn at city level
 ```{r}
 ## city level churn ##
 #to get distinct customers and state
